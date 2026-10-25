@@ -11,11 +11,15 @@ from src.database import (
 )
 from src.repair_ticket_repository import RepairTicketRepository
 from src.repair_service import begin_diagnosis
+# import sqlite support and the pytest testing framework
 import sqlite3
 import pytest
 
+# verify that db initialization creates customers table
 def test_initialize_database_creates_customers_table():
+    # create a temp sqlite db in memory for testing
     connection = initialize_database(":memory:")
+    # check sqlite's schema metadata for the customers table
     table = connection.execute(
         """
         SELECT name
@@ -24,17 +28,23 @@ def test_initialize_database_creates_customers_table():
             AND name = 'customers'
         """
     ).fetchone()
+    # verify that the customers table was successfully created
     assert table is not None
+    # close the sqlite connection and release its resources
     connection.close()
 
+# verify that a customer can be inserted and retrieved correctly
 def test_add_customer():
+    # initialize an isolated in-memory db
     connection = initialize_database(":memory:")
+    # insert a test customer and capture the generated ID
     customer_id = add_customer(
         connection,
         "Marcus Hinton",
-        "480-289-1629",
+        "480-745-0086",
         "marchinton@gmail.com",
     )
+    # retrieve the newly inserted customer using their unique ID
     customer = connection.execute(
         """
         SELECT customer_id, name, phone, email
@@ -43,11 +53,13 @@ def test_add_customer():
         """,
         (customer_id,),
     ).fetchone()
+    # verify that the retrieved customer info matches the values originally inserted
     assert customer["name"] == "Marcus Hinton"
-    assert customer["phone"] == "480-289-1629"
+    assert customer["phone"] == "480-745-0086"
     assert customer["email"] == "marchinton@gmail.com"
     connection.close()
 
+# verify that db initialization creates the devices table
 def test_initalize_database_creates_devicers_table():
     connection = initialize_database(":memory:")
     table = connection.execute(
@@ -63,6 +75,7 @@ def test_initalize_database_creates_devicers_table():
 
 def test_add_device():
     connection = initialize_database(":memory:")
+    # create a customer first so the new device can reference an existing customer ID
     customer_id = add_customer(
         connection,
         "Poopy Butthole",
@@ -91,6 +104,7 @@ def test_add_device():
         """,
         (device_id,),
     ).fetchone()
+    # verify the device belongs to the correct customer and its identifying info was stored correctly
     assert device["customer_id"] == customer_id
     assert device["device_type"] == "Laptop"
     assert device["manufacturer"] == "Lenovo"
@@ -98,6 +112,7 @@ def test_add_device():
     assert device["serial_number"] == "SN123456"
     connection.close()
 
+# verify that db initialization creates the repair_tickets table
 def test_initialize_database_creates_repair_tickets_table():
     connection = initialize_database(":memory:")
     table = connection.execute(
@@ -111,6 +126,7 @@ def test_initialize_database_creates_repair_tickets_table():
     assert table is not None
     connection.close()
 
+# verify the ticket is associated with correct device, contains the reported issue, and has default status
 def test_add_repair_ticket():
     connection = initialize_database(":memory:")
     customer_id = add_customer(
@@ -183,6 +199,7 @@ def test_update_repair_ticket_status():
         """,
         (ticket_id,),
     ).fetchone()
+    # verify that the update affected a ticket and the new status was stored correctly
     assert success is True
     assert ticket["status"] == "diagnosing"
     connection.close()
@@ -220,6 +237,7 @@ def test_repair_ticket_repository_rejects_invalid_status():
         """,
         (ticket_id,),
     ).fetchone()
+    # verify that invalid repair statuses are rejected without modifying the existing ticket
     assert success is False
     assert ticket["status"] == "received"
     connection.close()
@@ -245,6 +263,7 @@ def test_repair_ticket_repository_get():
         device_id,
         "Keyboard not responding",
     )
+    # verify the ticket exists and its stored values match info used to create it
     ticket = repository.get(ticket_id)
     assert ticket is not None
     assert ticket["ticket_id"] == ticket_id
@@ -278,6 +297,7 @@ def test_repair_ticket_repository_get_all():
         device_id,
         "USB port not working",
     )
+    # verify that both repair tickets were retrieved in expected order with correct descriptions
     tickets = repository.get_all()
     assert len(tickets) == 2
     assert tickets[0]["issue_description"] == "Screen flickering"
@@ -305,6 +325,7 @@ def test_repair_ticket_repository_get_details():
         device_id,
         "Trackpad not clicking",
     )
+    # verify that the joined query returns the correct repair ticket, device, and customer info
     details = repository.get_details(ticket_id)
     assert details["ticket_id"] == ticket_id
     assert details["issue_description"] == "Trackpad not clicking"
@@ -318,6 +339,7 @@ def test_repair_ticket_repository_get_details():
     assert details["email"] == "helenbrooks@gmail.com"
     connection.close()
 
+# verify that db init creates the diagnostics table
 def test_initialize_database_creates_diagnostics_table():
     connection = initialize_database(":memory:")
     table = connection.execute(
@@ -365,6 +387,7 @@ def test_add_diagnostic():
         """,
         (diagnostic_id,),
     ).fetchone()
+    # verify the diag belongs to the correct ticket and that its notes were stored accurately
     assert diagnostic["ticket_id"] == ticket_id
     assert diagnostic["notes"] == "SSD failing SMART test"
     connection.close()
@@ -411,6 +434,7 @@ def test_begin_diagnosis_success():
         """,
         (ticket_id,),
     ).fetchone()
+    # verify the diag workflow succeeded, updated the ticket status, and saved the diag notes
     assert result is True
     assert ticket["status"] == "diagnosing"
     assert diagnostic["notes"] == "CPU overheating during stress test"
@@ -448,6 +472,7 @@ def test_begin_diagnosis_rolls_back_on_status_failure():
         """
     )
     connection.commit()
+    # verify that a forced status-update failure raises the expected sqlite integrity error
     with pytest.raises(sqlite3.IntegrityError):
         begin_diagnosis(
             connection,
@@ -462,6 +487,7 @@ def test_begin_diagnosis_rolls_back_on_status_failure():
         """,
         (ticket_id,),
     ).fetchone()
+    # verify the failed transaction preserved the original ticket status and rolled back the diagnostic insertion
     assert ticket["status"] == "received"
     diagnostic = connection.execute(
         """
@@ -495,6 +521,7 @@ def test_database_rejects_invalid_repair_ticket_status():
         device_id,
         "Testing status validation",
     )
+    # verify the db trigger rejects invalid statuses and raises the expected integrity error
     with pytest.raises(
         sqlite3.IntegrityError, match="invalid repair ticket status",
     ):
@@ -509,7 +536,9 @@ def test_database_rejects_invalid_repair_ticket_status():
                 ticket_id,
             ),
         )
+    # roll back any uncommitted db changes
     connection.rollback()
+    # retrieve the ticket after the rejected update
     ticket = connection.execute(
         """
         SELECT status
@@ -518,12 +547,17 @@ def test_database_rejects_invalid_repair_ticket_status():
         """,
         (ticket_id,),
     ).fetchone()
+    # verify the ticket retians its original status
     assert ticket["status"] == "received"
+    # close the db connection
     connection.close()
 
-def test_database_schema_version_is_2():
+# verify that db init applies migrations through version 3
+def test_database_schema_version_is_3():
     connection = initialize_database(":memory:")
+    # retrieve the current db schema version
     version = get_database_version(connection)
+    # confirm the schema is at version 3
     assert version == 3
     connection.close()
 
@@ -538,9 +572,11 @@ def test_priority_column_exists_after_migration():
         column["name"]
         for column in columns
     ]
+    # verify that migration 2 added the priority column by examining the repair_tickets table structure
     assert "priority" in column_names
     connection.close()
 
+# verify that rerunning migrations does not duplicate schema changes or alter the current db version
 def test_migrations_are_idempotent():
     connection = initialize_database(":memory:")
     run_migrations(connection)
@@ -557,43 +593,51 @@ def test_migrations_are_idempotent():
         if column["name"] == "priority"
     ]
     assert version == 3
+    # filter table's column metadata to find columns named "priority" and verify exactly one exists
     assert len(priority_columns) == 1
     connection.close()
 
+# verify that a failed migration rolls back db schema changes
 def test_failed_migration_rolls_back():
     connection = initialize_database(":memory:")
     original_version = get_database_version(connection)
-    with pytest.raises(sqlite3.OperationalError):
-        with connection:
-            connection.execute(
-                """
-                CREATE TABLE migration_test (
-                    id INTEGER PRIMARY KEY
+    # expect an OperationalError from invalid sql to test how to db handles a failed migration
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            with connection:
+                connection.execute(
+                    """
+                    CREATE TABLE migration_test (
+                        id INTEGER PRIMARY KEY
+                    )
+                    """
                 )
+                connection.execute(
+                    """
+                    THIS IS INVALID SQL
+                    """
+                )
+                set_database_version(connection, 99)
+            # verify the failed migration was rolled back
+            table = connection.execute(
                 """
-            )
-            connection.execute(
+                SELECT name
+                FROM sqlite_master
+                WHERE type = 'table'
+                    AND name = 'migration_test'
                 """
-                THIS IS INVALID SQL
-                """
-            )
-            set_database_version(connection, 99)
-        table = connection.execute(
-            """
-            SELECT name
-            FROM sqlite_master
-            WHERE type = 'table'
-                AND name = 'migration_test'
-            """
-        ).fetchone()
-        assert table is None
-        assert get_database_version(connection) == original_version
+            ).fetchone()
+            assert table is None
+            assert get_database_version(connection) == original_version
+    finally:
         connection.close()
 
+# verify migration 3 updates the schema version and creates the index on repair_tickets.device_id
 def test_migration_3_creates_index(tmp_path):
     db_path = tmp_path / "repair_shop.db"
     connection = initialize_database(db_path)
     try:
+        # verify the db version and index
         version = connection.execute(
             "PRAGMA user_version"
         ).fetchone()[0]
@@ -603,5 +647,125 @@ def test_migration_3_creates_index(tmp_path):
         ).fetchall()
         index_names = [row["name"] for row in indexes]
         assert "idx_repair_tickets_device_id" in index_names
+    finally:
+        connection.close()
+
+def test_repair_ticket_query_uses_index(tmp_path):
+    db_path = tmp_path / "repair_shop.db"
+    connection = initialize_database(db_path)
+    try:
+        # examine sqlite's execution plan for finding repair tickets associated with a device
+        plan = connection.execute(
+            """
+            EXPLAIN QUERY PLAN
+            SELECT *
+            FROM repair_tickets
+            WHERE device_id = ?
+            """,
+            (1,),
+        ).fetchall()
+        for row in plan:
+            print(row["detail"])
+        # verify that sqlite plans to use the device_id index
+        assert any(
+            "idx_repair_tickets_device_id" in row["detail"]
+            for row in plan
+        )
+    finally:
+        connection.close()
+
+def test_compare_index_vs_table_scan(tmp_path):
+    db_path = tmp_path / "repair_shop.db"
+    connection = initialize_database(db_path)
+    # compare sqlite's query execution plans when indexes are allowed when indexes are allowed versus when index usage is disabled
+    try:
+        indexed = connection.execute(
+            """
+            EXPLAIN QUERY PLAN
+            SELECT *
+            FROM repair_tickets
+            WHERE device_id = ?
+            """,
+            (1,),
+        ).fetchall()
+        without_index = connection.execute(
+            """
+            EXPLAIN QUERY PLAN
+            SELECT *
+            FROM repair_tickets NOT INDEXED
+            WHERE device_id = ?
+            """,
+            (1,),
+        ).fetchall()
+        print("\nWITH INDEX:")
+        for row in indexed:
+            print(row["detail"])
+        print("\nWITHOUT INDEX:")
+        for row in without_index:
+            print(row["detail"])
+    finally:
+        connection.close()
+
+# create 15 test customers using a loop and generate unique names with an f-string
+def test_small_shop_device_history(tmp_path):
+    db_path = tmp_path / "small_shop.db"
+    connection = initialize_database(db_path)
+    try:
+        target_device_id = None
+        with connection:
+            for i in range(15):
+                # create a customer, then use their generated ID to associate a new laptop with that customer. store the new device ID for later repair tickets
+                customer = connection.execute(
+                    "INSERT INTO customers (name) VALUES (?)",
+                    (f"Customer {i}",)
+                )
+                device = connection.execute(
+                    """
+                    INSERT INTO devices
+                    (customer_id, device_type)
+                    VALUES (?, ?)
+                    """,
+                    (customer.lastrowid, "Laptop")
+                )
+                device_id = device.lastrowid
+                # save the fourth customer's device ID so we can verify its repair history later
+                if i == 3:
+                    target_device_id = device_id
+                connection.execute(
+                    """
+                    INSERT INTO repair_tickets
+                    (device_id, issue_description)
+                    VALUES (?, ?)
+                    """,
+                    (device_id, "Battery replacement")
+                )
+                # every third customer returns for another repair
+                if i % 3 == 0:
+                    connection.execute(
+                        """
+                        INSERT INTO repair_tickets
+                        (device_id, issue_description)
+                        VALUES (?, ?)
+                        """,
+                        (device_id, "Charging problem")
+                    )
+        tickets = connection.execute(
+            """
+            SELECT *
+            FROM repair_tickets
+            WHERE device_id = ?
+            ORDER BY ticket_id
+            """,
+            (target_device_id,)
+        ).fetchall()
+        # verify exactly two repair tickets exist and both belong to the selected device
+        assert len(tickets) == 2
+        assert all(
+            ticket["device_id"] == target_device_id
+            for ticket in tickets
+        )
+        # verify that the first and second repair tickets have the expected issue descriptions in the correct order
+        assert tickets[0]["issue_description"] == "Battery replacement"
+        assert tickets[1]["issue_description"] == "Charging problem"
     finally:
         connection.close()
